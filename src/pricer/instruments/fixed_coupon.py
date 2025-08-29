@@ -1,9 +1,22 @@
 from datetime import date
-from pydantic import BaseModel,model_validator, validator
+from pydantic import BaseModel, model_validator, validator
 import QuantLib as ql
 from coupons import BaseCoupon
 
 class FixedCouponModel(BaseModel):
+    """
+    Modèle Pydantic pour valider les données d'un coupon fixe avant création métier.
+    
+    Champs principaux :
+    - start_date : début de la période d'accrual (date à partir de laquelle les intérêts courent)
+    - end_date : fin de la période d'accrual (date jusqu'à laquelle les intérêts sont calculés)
+    - payment_date : date à laquelle le coupon est payé (date de règlement)
+    - notional : montant notionnel sur lequel les intérêts sont calculés (doit être positif)
+    - fixed_rate : taux fixe appliqué au coupon (ex: 0.05 pour 5%)
+    - calendar : calendrier financier utilisé pour ajuster les dates (ex: TARGET)
+    - day_count : convention de calcul des intérêts (ex: Actual360)
+    """
+
     start_date: date
     end_date: date
     payment_date: date
@@ -14,7 +27,7 @@ class FixedCouponModel(BaseModel):
 
     @model_validator(mode='before')
     def check_fields(cls, values):
-        # values est un dict avec les données brutes avant validation
+        # Validation basique des champs avant instanciation
         notional = values.get('notional')
         if notional is not None and notional <= 0:
             raise ValueError("Le notionnel doit être strictement positif")
@@ -28,7 +41,6 @@ class FixedCouponModel(BaseModel):
         if calendar is not None and calendar not in supported:
             raise ValueError(f"Calendrier '{calendar}' non supporté. Choisir parmi {supported}")
     
-        # validation day_count
         supported_day_counts = ["Actual360", "Thirty360", "Actual365Fixed"]
         day_count = values.get('day_count')
         if day_count is not None and day_count not in supported_day_counts:
@@ -36,20 +48,24 @@ class FixedCouponModel(BaseModel):
 
         return values
 
-
     @model_validator(mode='after')
     def check_dates_consistency(cls, model):
-        # model est une instance de FixedCouponModel
+        # Validation logique des dates une fois les champs validés
         if model.end_date <= model.start_date:
             raise ValueError("La date de fin doit être strictement après la date de début")
         if model.payment_date < model.end_date:
             raise ValueError("La date de paiement doit être après la date de fin")
         return model
 
-# Fonction qui crée l'instance FixedCoupon à partir du modèle validé
+
 class FixedCoupon(BaseCoupon):
+    """
+    Classe métier représentant un coupon à taux fixe.
+    Hérite de BaseCoupon et ajoute le taux fixe + calcul du montant.
+    """
+
     def __init__(self, model: FixedCouponModel):
-        # Calendrier
+        # Mapping du calendrier sous forme de string vers objet QuantLib Calendar
         if model.calendar == "TARGET":
             calendar = ql.TARGET()
         elif model.calendar == "UnitedStates":
@@ -59,7 +75,7 @@ class FixedCoupon(BaseCoupon):
         else:
             raise ValueError(f"Calendrier QuantLib non reconnu: {model.calendar}")
 
-        # Conversion day_count
+        # Mapping des conventions de calcul d'intérêt vers QuantLib DayCounter
         day_count_map = {
             "Actual360": ql.Actual360(),
             "Thirty360": ql.Thirty360(ql.Thirty360.BondBasis),
@@ -69,7 +85,7 @@ class FixedCoupon(BaseCoupon):
             raise ValueError(f"Day count QuantLib non reconnu: {model.day_count}")
         day_count = day_count_map[model.day_count]
 
-        # Appel base
+        # Initialisation des dates et notionnel dans la classe mère
         super().__init__(
             start_date=model.start_date,
             end_date=model.end_date,
@@ -77,10 +93,15 @@ class FixedCoupon(BaseCoupon):
             notional=model.notional,
             calendar=calendar,
         )
+
         self.fixed_rate = model.fixed_rate
         self.day_count = day_count
 
     def amount(self) -> float:
+        """
+        Calcul du montant du coupon fixe :
+        Montant = Notional * taux fixe * fraction d'année selon la convention day count.
+        """
         accrual_fraction = self.day_count.yearFraction(self.start_date, self.end_date)
         return self.notional * self.fixed_rate * accrual_fraction
 
@@ -90,9 +111,10 @@ class FixedCoupon(BaseCoupon):
             f"notional={self.notional}, fixed_rate={self.fixed_rate}, day_count={self.day_count.name()})"
         )
 
+
 def main():
     try:
-        # Création du modèle avec des données valides
+        # Exemple de création et utilisation du modèle + coupon fixe métier
         model = FixedCouponModel(
             start_date=date(2025, 1, 1),
             end_date=date(2025, 7, 1),
@@ -103,18 +125,15 @@ def main():
             day_count="Actual360"
         )
 
-        # Création du coupon fixe métier
         coupon = FixedCoupon(model)
 
-        # Affichage du coupon
         print(coupon)
-
-        # Calcul et affichage du montant
         montant = coupon.amount()
         print(f"Montant du coupon: {montant:.2f}")
 
     except Exception as e:
         print(f"Erreur: {e}")
+
 
 if __name__ == "__main__":
     main()
