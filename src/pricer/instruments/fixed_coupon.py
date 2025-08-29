@@ -1,5 +1,5 @@
 from datetime import date
-from pydantic import BaseModel, model_validator, validator
+from pydantic import BaseModel, model_validator
 import QuantLib as ql
 from coupons import BaseCoupon
 
