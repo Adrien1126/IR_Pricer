@@ -1,0 +1,120 @@
+from datetime import date
+from pydantic import BaseModel,model_validator, validator
+import QuantLib as ql
+from coupons import BaseCoupon
+
+class FixedCouponModel(BaseModel):
+    start_date: date
+    end_date: date
+    payment_date: date
+    notional: float
+    fixed_rate: float
+    calendar: str = "TARGET"
+    day_count: str = "Actual360"
+
+    @model_validator(mode='before')
+    def check_fields(cls, values):
+        # values est un dict avec les données brutes avant validation
+        notional = values.get('notional')
+        if notional is not None and notional <= 0:
+            raise ValueError("Le notionnel doit être strictement positif")
+
+        fixed_rate = values.get('fixed_rate')
+        if fixed_rate is not None and not (0 <= fixed_rate <= 1):
+            raise ValueError("Le taux fixe doit être entre 0 et 1 (ex: 0.05 pour 5%)")
+
+        calendar = values.get('calendar')
+        supported = ["TARGET", "UnitedStates", "NullCalendar"]
+        if calendar is not None and calendar not in supported:
+            raise ValueError(f"Calendrier '{calendar}' non supporté. Choisir parmi {supported}")
+    
+        # validation day_count
+        supported_day_counts = ["Actual360", "Thirty360", "Actual365Fixed"]
+        day_count = values.get('day_count')
+        if day_count is not None and day_count not in supported_day_counts:
+            raise ValueError(f"Day count '{day_count}' non supporté. Choisir parmi {supported_day_counts}")
+
+        return values
+
+
+    @model_validator(mode='after')
+    def check_dates_consistency(cls, model):
+        # model est une instance de FixedCouponModel
+        if model.end_date <= model.start_date:
+            raise ValueError("La date de fin doit être strictement après la date de début")
+        if model.payment_date < model.end_date:
+            raise ValueError("La date de paiement doit être après la date de fin")
+        return model
+
+# Fonction qui crée l'instance FixedCoupon à partir du modèle validé
+class FixedCoupon(BaseCoupon):
+    def __init__(self, model: FixedCouponModel):
+        # Calendrier
+        if model.calendar == "TARGET":
+            calendar = ql.TARGET()
+        elif model.calendar == "UnitedStates":
+            calendar = ql.UnitedStates()
+        elif model.calendar == "NullCalendar":
+            calendar = ql.NullCalendar()
+        else:
+            raise ValueError(f"Calendrier QuantLib non reconnu: {model.calendar}")
+
+        # Conversion day_count
+        day_count_map = {
+            "Actual360": ql.Actual360(),
+            "Thirty360": ql.Thirty360(ql.Thirty360.BondBasis),
+            "Actual365Fixed": ql.Actual365Fixed(),
+        }
+        if model.day_count not in day_count_map:
+            raise ValueError(f"Day count QuantLib non reconnu: {model.day_count}")
+        day_count = day_count_map[model.day_count]
+
+        # Appel base
+        super().__init__(
+            start_date=model.start_date,
+            end_date=model.end_date,
+            payment_date=model.payment_date,
+            notional=model.notional,
+            calendar=calendar,
+        )
+        self.fixed_rate = model.fixed_rate
+        self.day_count = day_count
+
+    def amount(self) -> float:
+        accrual_fraction = self.day_count.yearFraction(self.start_date, self.end_date)
+        return self.notional * self.fixed_rate * accrual_fraction
+
+    def __repr__(self):
+        return (
+            f"FixedCoupon(start={self.start_date}, end={self.end_date}, pay={self.payment_date}, "
+            f"notional={self.notional}, fixed_rate={self.fixed_rate}, day_count={self.day_count.name()})"
+        )
+
+def main():
+    try:
+        # Création du modèle avec des données valides
+        model = FixedCouponModel(
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 7, 1),
+            payment_date=date(2025, 7, 3),
+            notional=1_000_000,
+            fixed_rate=0.05,
+            calendar="TARGET",
+            day_count="Actual360"
+        )
+
+        # Création du coupon fixe métier
+        coupon = FixedCoupon(model)
+
+        # Affichage du coupon
+        print(coupon)
+
+        # Calcul et affichage du montant
+        montant = coupon.amount()
+        print(f"Montant du coupon: {montant:.2f}")
+
+    except Exception as e:
+        print(f"Erreur: {e}")
+
+if __name__ == "__main__":
+    main()
