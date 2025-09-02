@@ -1,21 +1,13 @@
 from abc import ABC, abstractmethod
 from datetime import date
+from typing import List
 import QuantLib as ql
+from pricer.instruments.coupon import BaseCoupon
 
 class BaseLeg(ABC):
     """
     Classe abstraite représentant une jambe (Leg) d’un produit de taux.
-    Sert de base à FixedLeg et FloatingLeg.
-
-    Attributs :
-    - start_date : début de la jambe (premier coupon)
-    - end_date : fin de la jambe (dernier coupon)
-    - notional : montant nominal utilisé pour tous les coupons
-    - calendar : calendrier QuantLib utilisé pour ajuster les dates
-    - payment_frequency : fréquence de paiement (ex : ql.Period("6M"))
-    - day_count : convention de calcul de jours (Actual360, etc.)
-    - business_convention : convention d’ajustement des dates (ex: "ModifiedFollowing")
-    - payment_lag : décalage (en jours ouvrés) entre la fin de période et la date de paiement
+    Gestion centralisée de la génération du schedule.
     """
 
     def __init__(
@@ -26,26 +18,38 @@ class BaseLeg(ABC):
         calendar: ql.Calendar,
         payment_frequency: ql.Period,
         day_count: ql.DayCounter,
-        business_convention: int,  # <-- Note ici un int (constante QuantLib)
+        business_convention: int,
         payment_lag: int = 0,
     ):
-        self.start_date = ql.Date.from_date(start_date)
-        self.end_date = ql.Date.from_date(end_date)
+        self.start_date = ql.Date(start_date.day, start_date.month, start_date.year)
+        self.end_date = ql.Date(end_date.day, end_date.month, end_date.year)
         self.notional = notional
         self.calendar = calendar
         self.payment_frequency = payment_frequency
         self.day_count = day_count
         self.business_convention = business_convention
         self.payment_lag = payment_lag
+        self.coupons: List[BaseCoupon] = []
 
-        self.coupons = []  # Liste de coupons, à générer dans les classes filles
+    def generate_schedule(self) -> List[ql.Date]:
+        """
+        Génère le calendrier de paiement selon les conventions.
+        """
+        schedule = ql.Schedule(
+            self.start_date,
+            self.end_date,
+            self.payment_frequency,
+            self.calendar,
+            self.business_convention,
+            self.business_convention,
+            ql.DateGeneration.Forward,
+            False,
+        )
+        return [schedule[i] for i in range(len(schedule))]
 
     @abstractmethod
-    def build_leg(self):
-        """
-        Méthode à implémenter dans les classes filles.
-        Elle construit les coupons de la jambe.
-        """
+    def build_leg(self) -> List[BaseCoupon]:
+        """Méthode à implémenter dans les classes filles."""
         pass
 
     def __repr__(self):

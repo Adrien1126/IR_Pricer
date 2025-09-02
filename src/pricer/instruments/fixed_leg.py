@@ -1,23 +1,16 @@
 from datetime import date
-from pydantic import BaseModel, model_validator 
+from pydantic import BaseModel, model_validator
+from dateutil.relativedelta import relativedelta
 import QuantLib as ql
-from leg import BaseLeg
-from fixed_coupon import FixedCouponModel, FixedCoupon
 
-class FixeLegModel(BaseModel):
+from pricer.instruments.fixed_coupon import FixedCouponModel, FixedCoupon
+from pricer.instruments.leg import BaseLeg
+from pricer.utils.mappings import CALENDAR_MAP, DAY_COUNT_MAP, BUSINESS_CONVENTION_MAP, PAYMENT_FREQUENCY_MAP
+
+
+class FixedLegModel(BaseModel):
     """ 
     Modèle Pydantic pour valider les données d'une leg à taux fixe avant création métier. 
-
-    Champs principaux :
-    - start_date : début de la jambe (premier coupon)
-    - end_date : fin de la jambe (dernier coupon)
-    - notional : montant nominal utilisé pour tous les coupons
-    - calendar : calendrier QuantLib utilisé pour ajuster les dates
-    - payment_frequency : fréquence de paiement (ex : "6M")
-    - day_count : convention de calcul de jours (Actual360, etc.)
-    - business_convention : convention d’ajustement des dates (ex: "ModifiedFollowing")
-    - payment_lag : décalage (en jours ouvrés) entre la fin de période et la date de paiement
-    - fixed_rate : taux fixe appliqué au coupon (ex: 0.05 pour 5%)
     """
 
     start_date: date
@@ -29,10 +22,9 @@ class FixeLegModel(BaseModel):
     day_count: str = "Actual360"
     business_convention: str = "Following"
     payment_lag: int = 0
-    
+
     @model_validator(mode='before')
     def check_fields(cls, values):
-        # Validation des champs avant instanciation 
         notional = values.get('notional')
         if notional is not None and notional <= 0:
             raise ValueError("Le notionnel doit être strictement positif")
@@ -42,20 +34,41 @@ class FixeLegModel(BaseModel):
             raise ValueError("Le taux fixe doit être entre 0 et 1 (ex: 0.05 pour 5%)")
 
         calendar = values.get('calendar')
-        supported = ["TARGET", "UnitedStates", "NullCalendar"]
-        if calendar is not None and calendar not in supported:
-            raise ValueError(f"Calendrier '{calendar}' non supporté. Choisir parmi {supported}")
+        if calendar not in CALENDAR_MAP:
+            raise ValueError(f"Calendrier '{calendar}' non supporté. Choisir parmi {list(CALENDAR_MAP.keys())}")
 
-        supported_day_counts = ["Actual360", "Thirty360", "Actual365Fixed"]
         day_count = values.get('day_count')
-        if day_count is not None and day_count not in supported_day_counts:
-            raise ValueError(f"Day count '{day_count}' non supporté. Choisir parmi {supported_day_counts}")
+        if day_count not in DAY_COUNT_MAP:
+            raise ValueError(f"Day count '{day_count}' non supporté. Choisir parmi {list(DAY_COUNT_MAP.keys())}")
+
+        business_convention = values.get('business_convention')
+        if business_convention not in BUSINESS_CONVENTION_MAP:
+            raise ValueError(f"Business convention '{business_convention}' non supportée. Choisir parmi {list(BUSINESS_CONVENTION_MAP.keys())}")
+
+        payment_frequency = values.get('payment_frequency')
+        if payment_frequency not in PAYMENT_FREQUENCY_MAP:
+            raise ValueError(f"Fréquence de paiement '{payment_frequency}' non supportée. Choisir parmi {list(PAYMENT_FREQUENCY_MAP.keys())}")
+
+
+        # Vérification que la fréquence de paiement n'est pas plus longue que la leg
+        period = PAYMENT_FREQUENCY_MAP[payment_frequency]
+        # Convertir la période en nombre de mois
+        if period.units() == ql.Months:
+            freq_months = period.length()
+        elif period.units() == ql.Years:
+            freq_months = period.length() * 12
+        else:
+            # Approximation si en jours ou semaines
+            freq_months = period.length() / 30
+
+        leg_months = (values['end_date'].year - values['start_date'].year) * 12 + (values['end_date'].month - values['start_date'].month)
+        if freq_months > leg_months:
+            raise ValueError(f"La fréquence de paiement '{payment_frequency}' ({freq_months} mois) est supérieure à la durée de la leg ({leg_months} mois)")
 
         return values
 
     @model_validator(mode='after')
     def check_dates_consistency(cls, model):
-        # Validation logique des dates une fois les champs validés
         if model.end_date <= model.start_date:
             raise ValueError("La date de fin doit être strictement après la date de début")
         return model
@@ -63,110 +76,77 @@ class FixeLegModel(BaseModel):
 
 class FixedLeg(BaseLeg):
     """
-    Classe métier représentant une leg à taux fixe.
-    Hérite de BaseLeg et ajoute la gestion des coupons fixes.
+    Jambe à taux fixe.
+    Utilise BaseLeg pour le schedule et crée des FixedCoupon.
     """
 
-    def __init__(self, model: FixeLegModel):
-
-        # Mapping du calendrier sous forme de string vers objet QuantLib Calendar
-        if model.calendar == "TARGET":
-            calendar = ql.TARGET()
-        elif model.calendar == "UnitedStates":
-            calendar = ql.UnitedStates()
-        elif model.calendar == "NullCalendar":
-            calendar = ql.NullCalendar()
-        else:
-            raise ValueError(f"Calendrier QuantLib non reconnu: {model.calendar}")
-
-        # Mapping des conventions de calcul d'intérêt vers QuantLib DayCounter
-        day_count_map = {
-            "Actual360": ql.Actual360(),
-            "Thirty360": ql.Thirty360(ql.Thirty360.BondBasis),
-            "Actual365Fixed": ql.Actual365Fixed(),
-        }
-        if model.day_count not in day_count_map:
-            raise ValueError(f"Day count QuantLib non reconnu: {model.day_count}")
-        day_count = day_count_map[model.day_count]
-
-        business_convention_map = {
-            "Following": ql.Following,
-            "ModifiedFollowing": ql.ModifiedFollowing,
-            "Preceding": ql.Preceding,
-        }
-        if model.business_convention not in business_convention_map:
-            raise ValueError(f"Business convention non reconnue: {model.business_convention}")
-        business_convention = business_convention_map[model.business_convention]
+    def __init__(self, model):
+        calendar = CALENDAR_MAP[model.calendar]
+        day_count = DAY_COUNT_MAP[model.day_count]
+        business_convention = BUSINESS_CONVENTION_MAP[model.business_convention]
+        payment_frequency = PAYMENT_FREQUENCY_MAP[model.payment_frequency]
 
         super().__init__(
             start_date=model.start_date,
             end_date=model.end_date,
             notional=model.notional,
             calendar=calendar,
-            payment_frequency=model.payment_frequency,
+            payment_frequency=payment_frequency,
             day_count=day_count,
             business_convention=business_convention,
             payment_lag=model.payment_lag,
         )
 
         self.fixed_rate = model.fixed_rate
+        self.model = model
 
     def build_leg(self):
-        """
-        Crée les coupons fixes pour la leg en fonction des paramètres définis.
-        """
-        coupons = []
-        schedule = ql.Schedule(
-            self.start_date,
-            self.end_date,
-            self.payment_frequency,
-            self.calendar,
-            self.business_convention,
-            self.business_convention,
-            ql.DateGeneration.Forward,
-            False,
-        )
-        for i in range(schedule.size()):
-            coupons.append(FixedCoupon(
-                start_date=schedule.date(i),
-                end_date=schedule.date(i + 1),
-                payment_date=schedule.date(i + 2),
+        schedule = self.generate_schedule()
+        self.coupons = []
+
+        for i in range(len(schedule) - 1):
+            start = schedule[i]
+            end = schedule[i + 1]
+            payment_date = self.calendar.advance(end, ql.Period(self.payment_lag, ql.Days), self.business_convention)
+
+            coupon_model = FixedCouponModel(
+                start_date=date(start.year(), start.month(), start.dayOfMonth()),
+                end_date=date(end.year(), end.month(), end.dayOfMonth()),
+                payment_date=date(payment_date.year(), payment_date.month(), payment_date.dayOfMonth()),
                 notional=self.notional,
                 fixed_rate=self.fixed_rate,
-                calendar=self.calendar,
-                day_count=self.day_count
-            ))
-        return coupons
+                calendar=self.model.calendar,
+                day_count=self.model.day_count,
+            )
+            coupon = FixedCoupon(coupon_model)
+            self.coupons.append(coupon)
 
+        return self.coupons
 
 def main():
     try:
-        # Création du modèle avec des données d'exemple
-        model = FixeLegModel(
-            start_date=date(2025, 1, 1),
-            end_date=date(2026, 1, 1),
+        model = FixedLegModel(
+            start_date=date(2025, 1, 31),
+            end_date=date(2025, 6, 30),
             notional=1_000_000,
-            payment_frequency="6M",
+            payment_frequency="1M",
             fixed_rate=0.05,
             calendar="TARGET",
             day_count="Actual360",
-            business_convention="Following",
-            payment_lag=2,
+            business_convention="ModifiedFollowing",
+            payment_lag=0,
         )
 
-        # Création de la leg fixe métier
         fixed_leg = FixedLeg(model)
-
-        # Génération des coupons
         coupons = fixed_leg.build_leg()
 
-        # Affichage des coupons générés
         for i, coupon in enumerate(coupons, 1):
             montant = coupon.amount()
-            print(f"Coupon {i}: {coupon} - Montant = {montant:.2f}")
+            print(f"Coupon {i}: {coupon}\n - Montant = {montant:.2f}")
 
     except Exception as e:
         print(f"Erreur rencontrée : {e}")
+
 
 if __name__ == "__main__":
     main()
