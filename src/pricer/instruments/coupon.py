@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import date
 from typing import Optional
 import QuantLib as ql
-from pydantic import BaseModel, validator, root_validator, Field
+from pydantic import BaseModel, Field
 
 # Base class métier avec QuantLib (abstraite)
 class BaseCoupon(ABC):

@@ -1,4 +1,5 @@
 from datetime import date
+from typing import List
 from pydantic import BaseModel, model_validator
 from dateutil.relativedelta import relativedelta
 import QuantLib as ql
@@ -67,11 +68,14 @@ class FixedLegModel(BaseModel):
 
         return values
 
-    @model_validator(mode='after')
-    def check_dates_consistency(cls, model):
-        if model.end_date <= model.start_date:
+    @model_validator(mode='before')
+    def check_dates_consistency(cls, values):
+        start = values.get('start_date')
+        end = values.get('end_date')
+        if start and end and end <= start:
             raise ValueError("La date de fin doit être strictement après la date de début")
-        return model
+        return values
+
 
 
 class FixedLeg(BaseLeg):
