@@ -43,9 +43,10 @@ class SwapModel(BaseModel):
 
 class Swap:
     """
-    Swap vanilla simple : un fixed leg et un floating leg.
+    Swap vanilla simple : un fixed leg et un floating leg. 
     """
 
+    # L'utilisation d'un floatingIndex de type ql.IborIndex est temporaire et sera remplacé par les données
     def __init__(self, model: SwapModel, floating_index: ql.IborIndex):
         self.model = model
         self.floating_index = floating_index

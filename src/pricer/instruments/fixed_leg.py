@@ -1,7 +1,5 @@
 from datetime import date
-from typing import List
 from pydantic import BaseModel, model_validator
-from dateutil.relativedelta import relativedelta
 import QuantLib as ql
 
 from pricer.instruments.fixed_coupon import FixedCouponModel, FixedCoupon
@@ -25,57 +23,64 @@ class FixedLegModel(BaseModel):
     payment_lag: int = 0
 
     @model_validator(mode='before')
-    def check_fields(cls, values):
+    def validate_all(cls, values):
+        # Validation du notionnel
         notional = values.get('notional')
         if notional is not None and notional <= 0:
             raise ValueError("Le notionnel doit être strictement positif")
 
+        # Validation du taux fixe
         fixed_rate = values.get('fixed_rate')
         if fixed_rate is not None and not (0 <= fixed_rate <= 1):
             raise ValueError("Le taux fixe doit être entre 0 et 1 (ex: 0.05 pour 5%)")
 
+        # Validation du calendrier
         calendar = values.get('calendar')
         if calendar not in CALENDAR_MAP:
             raise ValueError(f"Calendrier '{calendar}' non supporté. Choisir parmi {list(CALENDAR_MAP.keys())}")
 
+        # Validation du day count
         day_count = values.get('day_count')
         if day_count not in DAY_COUNT_MAP:
             raise ValueError(f"Day count '{day_count}' non supporté. Choisir parmi {list(DAY_COUNT_MAP.keys())}")
 
+        # Validation de la convention business
         business_convention = values.get('business_convention')
         if business_convention not in BUSINESS_CONVENTION_MAP:
             raise ValueError(f"Business convention '{business_convention}' non supportée. Choisir parmi {list(BUSINESS_CONVENTION_MAP.keys())}")
 
+        # Validation de la fréquence de paiement
         payment_frequency = values.get('payment_frequency')
         if payment_frequency not in PAYMENT_FREQUENCY_MAP:
             raise ValueError(f"Fréquence de paiement '{payment_frequency}' non supportée. Choisir parmi {list(PAYMENT_FREQUENCY_MAP.keys())}")
 
+        # Validation des dates
+        start = values.get('start_date')
+        end = values.get('end_date')
+        if start and end and end <= start:
+            raise ValueError("La date de fin doit être strictement après la date de début")
 
-        # Vérification que la fréquence de paiement n'est pas plus longue que la leg
+        # Validation que la fréquence n'est pas plus longue que la durée de la leg
         period = PAYMENT_FREQUENCY_MAP[payment_frequency]
-        # Convertir la période en nombre de mois
+
+        # Convertir la période en mois selon l'unité QuantLib
         if period.units() == ql.Months:
             freq_months = period.length()
         elif period.units() == ql.Years:
             freq_months = period.length() * 12
         else:
-            # Approximation si en jours ou semaines
+            # Approximation en jours ou autres unités
             freq_months = period.length() / 30
 
-        leg_months = (values['end_date'].year - values['start_date'].year) * 12 + (values['end_date'].month - values['start_date'].month)
+        # Calculer la durée de la leg en mois
+        leg_months = (end.year - start.year) * 12 + (end.month - start.month)
+
         if freq_months > leg_months:
-            raise ValueError(f"La fréquence de paiement '{payment_frequency}' ({freq_months} mois) est supérieure à la durée de la leg ({leg_months} mois)")
+            raise ValueError(
+                f"La fréquence de paiement '{payment_frequency}' ({freq_months} mois) est supérieure à la durée de la leg ({leg_months} mois)"
+            )
 
         return values
-
-    @model_validator(mode='before')
-    def check_dates_consistency(cls, values):
-        start = values.get('start_date')
-        end = values.get('end_date')
-        if start and end and end <= start:
-            raise ValueError("La date de fin doit être strictement après la date de début")
-        return values
-
 
 
 class FixedLeg(BaseLeg):

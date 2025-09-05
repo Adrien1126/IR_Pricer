@@ -29,30 +29,31 @@ class FloatingCouponModel(BaseModel):
     convention: str = "ModifiedFollowing"
 
     @model_validator(mode="before")
-    def validate_fields(cls, values):
+    def validate_before(cls, values):
         if (n := values.get("notional")) is not None and n <= 0:
             raise ValueError("Le notionnel doit être strictement positif.")
-
-        if (c := values.get("calendar")) not in CALENDAR_MAP:
-            raise ValueError(f"Calendrier non supporté : {c}")
-
-        if (d := values.get("day_count")) not in DAY_COUNT_MAP:
-            raise ValueError(f"Day count non supporté : {d}")
-
-        if (lag := values.get("fixing_lag")) is not None and lag < 0:
-            raise ValueError("Fixing lag doit être positif ou nul.")
-
-        if (conv := values.get("convention")) not in BUSINESS_CONVENTION_MAP:
-            raise ValueError(f"Convention '{conv}' non supportée.")
-
         return values
 
     @model_validator(mode="after")
-    def validate_dates(cls, model):
+    def validate_after(cls, model):
+        if model.calendar not in CALENDAR_MAP:
+            raise ValueError(f"Calendrier non supporté : {model.calendar}")
+
+        if model.day_count not in DAY_COUNT_MAP:
+            raise ValueError(f"Day count non supporté : {model.day_count}")
+
+        if model.fixing_lag < 0:
+            raise ValueError("Fixing lag doit être positif ou nul.")
+
+        if model.convention not in BUSINESS_CONVENTION_MAP:
+            raise ValueError(f"Convention '{model.convention}' non supportée.")
+
         if model.end_date <= model.start_date:
             raise ValueError("La date de fin doit être après la date de début.")
+
         if model.payment_date < model.end_date:
             raise ValueError("La date de paiement doit être après la date de fin.")
+
         return model
 
 
