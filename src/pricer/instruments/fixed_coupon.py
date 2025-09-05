@@ -1,5 +1,3 @@
-# src/pricer/instruments/fixed_coupon.py
-
 from datetime import date
 from pydantic import BaseModel, model_validator
 import QuantLib as ql
@@ -8,7 +6,10 @@ from pricer.utils.mappings import CALENDAR_MAP, DAY_COUNT_MAP
 
 class FixedCouponModel(BaseModel):
     """
-    Modèle Pydantic pour valider les données d'un coupon fixe avant création métier.
+    Modèle de validation des données d'un coupon fixe avant création métier.
+    
+    Utilise Pydantic pour s'assurer que les valeurs fournies sont correctes
+    (ex: taux entre 0 et 1, dates cohérentes, calendrier supporté, etc).
     """
 
     start_date: date
@@ -21,19 +22,22 @@ class FixedCouponModel(BaseModel):
 
     @model_validator(mode='before')
     def check_fields(cls, values):
-        # Validation basique des champs
+        # Vérifie que le notionnel est positif
         notional = values.get('notional')
         if notional is not None and notional <= 0:
             raise ValueError("Le notionnel doit être strictement positif")
 
+        # Vérifie que le taux fixe est entre 0 et 1 (ex: 0.05 = 5%)
         fixed_rate = values.get('fixed_rate')
         if fixed_rate is not None and not (0 <= fixed_rate <= 1):
             raise ValueError("Le taux fixe doit être entre 0 et 1 (ex: 0.05 pour 5%)")
 
+        # Vérifie que le calendrier est supporté
         calendar = values.get('calendar')
         if calendar is not None and calendar not in CALENDAR_MAP.keys():
             raise ValueError(f"Calendrier '{calendar}' non supporté. Choisir parmi {list(CALENDAR_MAP.keys())}")
 
+        # Vérifie que la convention de day count est supportée
         day_count = values.get('day_count')
         if day_count is not None and day_count not in DAY_COUNT_MAP.keys():
             raise ValueError(f"Day count '{day_count}' non supporté. Choisir parmi {list(DAY_COUNT_MAP.keys())}")
@@ -42,8 +46,10 @@ class FixedCouponModel(BaseModel):
 
     @model_validator(mode='after')
     def check_dates_consistency(cls, model):
+        # La date de fin doit être strictement après la date de début
         if model.end_date <= model.start_date:
             raise ValueError("La date de fin doit être strictement après la date de début")
+        # La date de paiement doit être après la date de fin
         if model.payment_date < model.end_date:
             raise ValueError("La date de paiement doit être après la date de fin")
         return model
@@ -51,17 +57,19 @@ class FixedCouponModel(BaseModel):
 
 class FixedCoupon(BaseCoupon):
     """
-    Coupon à taux fixe. Hérite de BaseCoupon et ajoute le taux fixe + calcul du montant.
+    Implémentation métier d’un coupon à taux fixe.
+    
+    Hérite de BaseCoupon et ajoute la gestion du taux fixe et du calcul du montant.
     """
 
     def __init__(self, model: FixedCouponModel):
-        # Calendrier
+        # Récupère le calendrier QuantLib selon le nom fourni
         calendar = CALENDAR_MAP[model.calendar]
 
-        # Day count
+        # Récupère la convention de day count QuantLib
         day_count = DAY_COUNT_MAP[model.day_count]
 
-        # Init parent
+        # Initialise la classe parent avec les dates, notional et calendrier
         super().__init__(
             start_date=model.start_date,
             end_date=model.end_date,
@@ -75,8 +83,9 @@ class FixedCoupon(BaseCoupon):
 
     def amount(self) -> float:
         """
-        Calcul du montant du coupon fixe :
-        Montant = Notional * taux fixe * fraction d'année selon la convention day count.
+        Calcule le montant du coupon fixe :
+        
+        Montant = Notional * taux fixe * fraction d'année (selon la convention de day count).
         """
         accrual_fraction = self.day_count.yearFraction(self.start_date, self.end_date)
         return self.notional * self.fixed_rate * accrual_fraction
@@ -89,7 +98,7 @@ class FixedCoupon(BaseCoupon):
 
 
 def main():
-    # Test rapide
+    # Exemple d'utilisation / test rapide
     model = FixedCouponModel(
         start_date=date(2025, 1, 1),
         end_date=date(2025, 7, 1),

@@ -21,19 +21,24 @@ class BaseLeg(ABC):
         business_convention: int,
         payment_lag: int = 0,
     ):
+        # Conversion des dates Python en QuantLib Date
         self.start_date = ql.Date(start_date.day, start_date.month, start_date.year)
         self.end_date = ql.Date(end_date.day, end_date.month, end_date.year)
+        
         self.notional = notional
         self.calendar = calendar
         self.payment_frequency = payment_frequency
         self.day_count = day_count
         self.business_convention = business_convention
         self.payment_lag = payment_lag
+        
+        # Liste des coupons générés (instanciés dans build_leg)
         self.coupons: List[BaseCoupon] = []
 
     def generate_schedule(self) -> List[ql.Date]:
         """
-        Génère le calendrier de paiement selon les conventions.
+        Génère le calendrier des dates de coupon/paiement selon les conventions.
+        Utilise QuantLib Schedule avec la fréquence et conventions passées.
         """
         schedule = ql.Schedule(
             self.start_date,
@@ -45,11 +50,15 @@ class BaseLeg(ABC):
             ql.DateGeneration.Forward,
             False,
         )
+        # On retourne une liste des dates du schedule
         return [schedule[i] for i in range(len(schedule))]
 
     @abstractmethod
     def build_leg(self) -> List[BaseCoupon]:
-        """Méthode à implémenter dans les classes filles."""
+        """
+        Doit être implémentée dans les classes concrètes,
+        pour construire la liste des coupons de la jambe.
+        """
         pass
 
     def __repr__(self):
