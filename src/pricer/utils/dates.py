@@ -1,4 +1,5 @@
 import QuantLib as ql
+import datetime
 from datetime import date
 from pricer.utils.mappings import DAY_COUNT_MAP, CALENDAR_MAP, BUSINESS_CONVENTION_MAP
 
@@ -64,3 +65,15 @@ def advance_date(start: date, tenor: str, calendar: str = "TARGET", convention: 
     
     # Retourne une date Python classique
     return date(ql_end.year(), ql_end.month(), ql_end.dayOfMonth())
+
+
+def to_pydate(d) -> datetime.date:
+    """Convertit un objet QuantLib.Date ou datetime.date en datetime.date"""
+    if isinstance(d, ql.Date):
+        return datetime.date(d.year(), d.month(), d.dayOfMonth())
+    elif isinstance(d, datetime.date):
+        return d
+    elif isinstance(d, datetime.datetime):  # tolérance
+        return d.date()
+    else:
+        raise TypeError(f"Type de date non supporté : {type(d)}")
